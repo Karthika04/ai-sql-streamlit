@@ -2,5 +2,12 @@ services:
   - type: web
     name: ai-sql-streamlit
     env: python
+    plan: free       # or starter if you want a paid plan
+    region: oregon   # choose your preferred region
+    branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run llm_app.py
+    startCommand: streamlit run llm_app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: OPENAI_API_KEY
+        value: "<YOUR_OPENAI_API_KEY_HERE>"
+    autoDeploy: true
