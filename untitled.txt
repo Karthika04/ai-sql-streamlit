@@ -1,0 +1,5 @@
+username = "health_data_100_patients_2f5h_user"
+password = "GAJCpLkgwuUn0vOelJcEf6LPTERwxV7p"
+server = "dpg-d4nifeshg0os739dhjt0-a.virginia-postgres.render.com"
+database = "health_data_100_patients_2f5h"
+

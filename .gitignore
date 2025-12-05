@@ -1,0 +1,14 @@
+.env
+env.txt
+.env
+env.txt
+.env
+.env
+env.txt
+env*
+.env
+env.txt
+.env
+env.txt
+.ipynb_checkpoints
+*.db
