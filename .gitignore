@@ -13,3 +13,8 @@ env.txt
 .ipynb_checkpoints
 *.db
 .env
+.env
+*.db
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
