@@ -1,19 +1,55 @@
-import streamlit as st
-import sqlite3
-import pandas as pd
 import os
 import re
-from openai import OpenAI
-from dotenv import load_dotenv
+import streamlit as st
+import pandas as pd
 
-# ---------- Load environment variables ----------
-load_dotenv("/Users/karthika/anaconda-ubuntu/.env")
+# Load environment variables from .env (only if exists)
+from dotenv import load_dotenv
+dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
+
+# ---------- OpenAI API Key ----------
+from openai import OpenAI
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# ---------- SQLite connection ----------
-DB_PATH = "/Users/karthika/anaconda-ubuntu/shared_folder/patient.db"
+# ---------- Decide which database to use ----------
+DATABASE_URL = os.getenv("DATABASE_URL")  # For Render / Postgres
 
-# Database schema for context
+if DATABASE_URL:
+    import psycopg2
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        print("Connected to PostgreSQL!")
+    except Exception as e:
+        st.error(f"Error connecting to PostgreSQL: {e}")
+        raise
+else:
+    import sqlite3
+    DB_PATH = os.path.join(os.path.dirname(__file__), "patient.db")
+    try:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        cursor = conn.cursor()
+        print(f"Connected to local SQLite database at {DB_PATH}")
+    except Exception as e:
+        st.error(f"Failed to connect to SQLite database: {e}")
+        raise
+
+# ---------- Example: list tables ----------
+try:
+    if DATABASE_URL:
+        cursor.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='public';"
+        )
+    else:
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+    tables = cursor.fetchall()
+    print("Tables:", tables)
+except Exception as e:
+    st.error(f"Error listing tables: {e}")
+
+# ---------- Database schema ----------
 DATABASE_SCHEMA = """
 Database Schema:
 
@@ -59,26 +95,23 @@ CORE TABLES:
     lab_datetime TIMESTAMP,
     lab_test_id INTEGER REFERENCES lab_tests(lab_test_id)
 )
-
-IMPORTANT NOTES:
-- Use JOINs to get descriptive values from lookup tables
-- patient_dob, admission_start, admission_end, and lab_datetime are TIMESTAMP types
-- To calculate age: strftime('%Y','now') - strftime('%Y',patient_dob)
-- To calculate length of stay in days: julianday(admission_end) - julianday(admission_start)
-- Always use proper JOINs for foreign key relationships
 """
 
-# ---------- Database connection ----------
+# ---------- Database connection helper ----------
 @st.cache_resource
 def get_db_connection():
+    """Return a database connection."""
     try:
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        if DATABASE_URL:
+            conn = psycopg2.connect(DATABASE_URL)
+        else:
+            conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         return conn
     except Exception as e:
         st.error(f"Failed to connect to database: {e}")
         return None
 
-# ---------- Run query ----------
+# ---------- Run SQL query ----------
 def run_query(sql):
     conn = get_db_connection()
     if conn is None:
@@ -93,12 +126,10 @@ def run_query(sql):
 # ---------- OpenAI client ----------
 @st.cache_resource
 def get_openai_client():
-    """Create and cache OpenAI client."""
     return OpenAI(api_key=OPENAI_API_KEY)
 
 # ---------- Extract SQL from GPT response ----------
 def extract_sql_from_response(response_text):
-    """Extract SQL query from ChatGPT response."""
     sql_pattern = r"```sql\s*(.*?)\s*```"
     matches = re.findall(sql_pattern, response_text, re.DOTALL | re.IGNORECASE)
     if matches:
@@ -109,7 +140,7 @@ def extract_sql_from_response(response_text):
         return matches[0].strip()
     return response_text.strip()
 
-# ---------- Generate SQLite-compatible SQL using GPT ----------
+# ---------- Generate SQL using GPT ----------
 def generate_sql_with_gpt(question):
     client = get_openai_client()
     prompt = f"""
@@ -122,11 +153,10 @@ User Question: {question}
 Requirements:
 1. Generate ONLY the SQL query, wrapped in ```sql``` code blocks
 2. Use proper JOINs to get descriptive names from lookup tables
-3. Use appropriate aggregations (COUNT, AVG, SUM, etc.) when needed
+3. Use appropriate aggregations (COUNT, AVG, SUM, etc.)
 4. Add LIMIT clauses for queries that might return many rows (default LIMIT 100)
-5. Use proper date/time functions for TIMESTAMP columns (use julianday() and strftime())
-6. Make sure the query is syntactically correct for SQLite
-7. Add helpful column aliases using AS
+5. Use proper date/time functions for TIMESTAMP columns
+6. Add helpful column aliases using AS
 
 Generate the SQL query:"""
     try:
@@ -139,16 +169,14 @@ Generate the SQL query:"""
             temperature=0.1,
             max_tokens=1000
         )
-
         raw_text = response.choices[0].message.content
         sql_query = extract_sql_from_response(raw_text)
         return sql_query, response
-
     except Exception as e:
         st.error(f"Error calling OpenAI API: {e}")
         return None, None
 
-# ---------- Streamlit App ----------
+# ---------- Streamlit app ----------
 def main():
     st.title("🤖 AI-Powered SQL Query Assistant")
     st.markdown(
@@ -159,25 +187,14 @@ def main():
     # Sidebar
     st.sidebar.title("💡 Example Questions")
     st.sidebar.markdown("""
-    Try asking questions like:
-
     **Demographics:**  
     - How many patients do we have by gender?
 
     **Admissions:**  
     - What is the average length of stay?
     """)
-    st.sidebar.markdown("---")
-    st.sidebar.info("""
-    🖊️**How it works:**
 
-    1. Enter your question in plain English  
-    2. AI generates an SQL query  
-    3. Review and optionally edit the query  
-    4. Click "Run Query" to execute
-    """)
-
-    # ---------- Initialize session state ----------
+    # Session state
     if 'generated_sql' not in st.session_state:
         st.session_state.generated_sql = None
     if 'current_question' not in st.session_state:
@@ -185,7 +202,7 @@ def main():
     if 'query_history' not in st.session_state:
         st.session_state.query_history = [] 
 
-    # ---------- User Input ----------
+    # User input
     user_question = st.text_area(
         "What would you like to know?",
         height=100,
@@ -198,7 +215,7 @@ def main():
     with col2:
         clear_button = st.button("Clear History", use_container_width=True)
 
-    # ---------- Generate SQL ----------
+    # Generate SQL
     if generate_button and user_question:
         user_question = user_question.strip()
         if st.session_state.current_question != user_question:
@@ -211,7 +228,7 @@ def main():
                 st.session_state.generated_sql = sql_query
                 st.session_state.current_question = user_question
 
-    # ---------- Display & edit SQL ----------
+    # Display & edit SQL
     if st.session_state.generated_sql:
         st.markdown("---")
         st.subheader("Generated SQL Query")
@@ -231,14 +248,10 @@ def main():
         if run_button and edited_sql.strip():
             with st.spinner("Executing query ..."):
                 df = run_query(edited_sql)
-
                 if df is not None:
                     st.session_state.query_history.append(
-                    {'question': user_question,
-                     'sql': edited_sql,
-                     'rows': len(df)}
+                        {'question': user_question, 'sql': edited_sql, 'rows': len(df)}
                     )
-
                     st.markdown("---")
                     st.subheader("📊 Query Results")
                     st.success(f"✅ Query returned {len(df)} rows")
